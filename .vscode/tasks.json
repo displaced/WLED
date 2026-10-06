@@ -37,6 +37,35 @@
       "presentation": {
         "panel": "shared"
       }
+    },
+    {
+      "label": "BC250: Build pinned release",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/tools/build-bc250.ps1"
+      ],
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "BC250: Build latest stable",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/tools/build-bc250.ps1",
+        "-Latest"
+      ],
+      "problemMatcher": [],
+      "group": "build"
     }
   ]
 }
