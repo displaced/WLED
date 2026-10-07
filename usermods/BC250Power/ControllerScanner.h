@@ -137,7 +137,8 @@ public:
     enabled = data.enabled;
     unlock();
     if (dirty.exchange(false)) configNeedsWrite = true;
-    if (enabled && !attempted && allowInit) {
+    const bool shouldScan = enabled && !powered;
+    if (shouldScan && !attempted && allowInit) {
       attempted = true;
       observations = xQueueCreate(QUEUE_SIZE, sizeof(Observation));
       // Calling btStarted also retains Arduino's Bluetooth memory at link time.
@@ -156,7 +157,7 @@ public:
     }
     bool scanning = false;
     if (radioReady && ble_hs_synced()) {
-      if (enabled && !ble_gap_disc_active() && uint32_t(now - scanAttemptAt) >= 5000) {
+      if (shouldScan && !ble_gap_disc_active() && uint32_t(now - scanAttemptAt) >= 5000) {
         scanAttemptAt = now;
         uint8_t addressType;
         if (ble_hs_id_infer_auto(0, &addressType) == 0) {
@@ -168,7 +169,7 @@ public:
           ble_gap_disc(addressType, BLE_HS_FOREVER, &parameters, gapEvent, this);
         }
       }
-      if (!enabled && ble_gap_disc_active()) ble_gap_disc_cancel();
+      if (!shouldScan && ble_gap_disc_active()) ble_gap_disc_cancel();
       scanning = ble_gap_disc_active();
     }
     if (!lock()) return false;
@@ -179,7 +180,14 @@ public:
       DEBUG_PRINTF_P(PSTR("BC250Power: controller scanning %s\n"), scanning ? "started" : "stopped");
     }
     data.scanning = scanning;
-    if (enabled && !scanning) data.message = "Scanner unavailable; disable and reboot before retrying";
+    // Stop learning as well as reception while the PSU is on. Keep the user's
+    // enable setting so scanning resumes automatically after PSU shutdown.
+    if (powered && data.learner.phase != Phase::Idle) {
+      data.learner.cancel();
+      data.revision++;
+    }
+    if (enabled && powered) data.message = "Scanning paused while PSU is on";
+    else if (enabled && !scanning) data.message = "Scanner unavailable; disable and reboot before retrying";
     if (previouslyPowered && !powered) { inhibited = true; inhibitedAt = now; }
     previouslyPowered = powered;
     if (inhibited && uint32_t(now - inhibitedAt) >= ControllerLearning::ABSENCE_MS) inhibited = false;
@@ -196,7 +204,7 @@ public:
     Observation observation;
     // Bound work per WLED loop so a busy radio cannot starve relay pulse handling.
     for (size_t n = 0; observations && n < QUEUE_SIZE && xQueueReceive(observations, &observation, 0) == pdTRUE; n++) {
-      if (!data.enabled || !scanning || uint32_t(now - observation.at) > 1000) continue;
+      if (powered || !data.enabled || !scanning || uint32_t(now - observation.at) > 1000) continue;
       // Discard packets queued before the current learning phase began.
       if (data.learner.phase != Phase::Idle && uint32_t(observation.at - data.learner.since) < 0x80000000UL)
         data.learner.observe(observation.id, observation.rssi, observation.at, data.store);

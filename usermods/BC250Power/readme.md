@@ -283,6 +283,20 @@ Do not deliberately put `osEvent` commands into lighting preset files.
 
 ## Xbox controller learning
 
+Scanning runs only while the PSU relay is off. PSU startup pauses reception and
+cancels any learning session; PSU shutdown resumes scanning automatically with
+the existing fifteen-second startup guard. Turning only the LEDs off does not
+resume scanning. The Bluetooth stack stays initialized, but discovery is stopped.
+
+Before starting Bluetooth scanning, open **Config > WiFi Setup**, uncheck
+**Disable WiFi sleep**, save, and reboot with the PSU off. The stable Arduino 2
+SDK requires Wi-Fi modem sleep for Bluetooth coexistence. With sleep disabled,
+starting Bluetooth after joining Wi-Fi reproduced an abort in
+`coex_core_enable`; enabling sleep eliminated that failure on the spare ESP32.
+The usermod does not currently enforce this prerequisite automatically. Keep
+Wi-Fi sleep enabled even after stopping scanning, since the Bluetooth stack
+remains initialized until reboot.
+
 The ESP32 build includes a passive NimBLE scanner, disabled by default. Open
 WLED's **Info** panel and use **Start scanning**, then **Learn**. Keep the target
 controller off for the five-second baseline, then power it on normally when the
