@@ -55,7 +55,7 @@ try {
   $mod = Join-Path $source 'usermods/BC250Power'
   New-Item -ItemType Directory -Path $mod -Force | Out-Null
   $hashes = [ordered]@{}
-  foreach ($name in @('BC250Power.cpp', 'library.json')) {
+  foreach ($name in @('BC250Power.cpp', 'ControllerLearning.h', 'ControllerScanner.h', 'library.json')) {
     $inputFile = Join-Path $repo "usermods/BC250Power/$name"
     Copy-Item -LiteralPath $inputFile -Destination $mod
     $hashes[$name] = (Get-FileHash -LiteralPath $inputFile -Algorithm SHA256).Hash

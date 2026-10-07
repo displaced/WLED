@@ -29,7 +29,8 @@ and **BC250: Build latest stable**.
 2. Exports upstream sources into a fresh directory under
    `build_output/bc250/<tag>-<timestamp>-<unique suffix>/source`. It does not
    switch branches, reset files, or require committing local usermod edits.
-3. Copies `BC250Power.cpp`, `library.json`, and the tracked
+3. Copies `BC250Power.cpp`, `ControllerLearning.h`, `ControllerScanner.h`,
+   `library.json`, and the tracked
    `bc250-platformio.ini` configuration. The gitignored root override is not
    used. Edit the tracked configuration to change future builds, including
    the UDP log destination (currently `192.168.50.146`). Device Wi-Fi credentials

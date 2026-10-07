@@ -2,6 +2,14 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Xbox detector: Serial monitor (COM12)",
+      "type": "process",
+      "command": "${env:USERPROFILE}/.platformio/penv/Scripts/platformio.exe",
+      "args": ["device", "monitor", "--port", "COM12", "--baud", "115200"],
+      "problemMatcher": [],
+      "presentation": {"reveal": "always", "panel": "dedicated"}
+    },
+    {
       "label": "Build: HTML and binary",
       "dependsOn": [
         "Build: HTML only",

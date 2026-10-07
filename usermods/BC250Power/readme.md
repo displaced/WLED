@@ -159,11 +159,26 @@ defaults (or the previously saved value), so future settings can be added safely
 
 ## Behavior
 
-- While enabled with valid pins, WLED master power follows the PSU relay,
-  including when all preset IDs are zero. Power-on restores WLED's remembered
-  brightness; power-off preserves it for the next start. Presets still select
-  appearance and brightness, but conflicting preset/API/UI master power changes
-  are corrected on the next controller loop. Segment settings remain independent.
+- The main interface's **Info** panel has a **Power Button** control. It pulses
+  relay 2 for `pulse-ms` (default 250 ms), independently of PSU and LED power.
+  It works even when the PSU relay is off, provided the usermod is enabled and
+  its pins are valid. It does not change the controller state or extend an
+  active pulse. A running OS may interpret a short power-button press as sleep
+  or shutdown; a sleeping machine may wake, according to its firmware/OS settings.
+  The equivalent command is `{"BC250Power":{"pressButton":true}}` sent to
+  `/json/state`. The command is never included in saved state or ordinary presets.
+  Automatic sense cutoff remains unchanged: if sense falls during sleep, it can
+  still remove PSU power. Verify the sleep sense behaviour before relying on wake.
+
+- While enabled with valid pins, switching WLED master power from off to on
+  requests PSU startup through the same checks as the case button. This includes
+  normal UI/API commands and presets that switch master power on. Restoring the
+  boot lighting state does not start the PSU.
+- Switching WLED off only darkens the LEDs; it never requests PSU shutdown or
+  pulses the BC250 button. LEDs can remain off while the computer runs.
+- Starting the PSU with the case button restores remembered LED brightness.
+  Emergency or automatic PSU cutoff switches the LEDs off. Presets may still
+  select appearance, brightness and lighting power while the PSU is running.
   Disabled control or invalid pins do not enforce WLED master power.
 - `OFF` + debounced case-button press asserts PS_ON# and enters `BOOTING`.
   The same held press is consumed until release; it cannot also force shutdown.
@@ -266,6 +281,76 @@ hardware setup step; no services are installed by this repository change.
 serialized, so saving a normal lighting preset does not record a command.
 Do not deliberately put `osEvent` commands into lighting preset files.
 
+## Xbox controller learning
+
+The ESP32 build includes a passive NimBLE scanner, disabled by default. Open
+WLED's **Info** panel and use **Start scanning**, then **Learn**. Keep the target
+controller off for the five-second baseline, then power it on normally when the
+instruction changes. After the thirty-second search, select **Save** beside its
+address and enter a name. The panel refreshes at the phase boundaries; **Refresh**
+also retrieves current results. Confirmation expires after sixty seconds.
+
+Up to eight controllers can be saved. Each has **Rename**, **Enable/Disable**, and
+**Delete** controls. Repeat Learn for additional controllers. Candidates must
+advertise gamepad appearance, Microsoft's company ID and the HID service together,
+with at least three observations spanning 200 ms. Baseline devices and saved
+controllers are excluded. There is no automatic selection when several appear.
+
+Saved enabled controllers request the normal PSU startup sequence only when the
+PSU is off and the power controller is enabled with valid pins. Detection while
+the PSU is on does nothing: it does not operate relay 2, wake a sleeping PC or
+change LEDs. The separate **Power Button** remains available for waking from sleep.
+Learning and configuration changes do not request startup. Detection is inhibited
+for fifteen seconds after scanning starts, list edits, and PSU shutdown.
+
+A fifteen-second gap in advertisements rearms detection. This observes an
+advertising appearance, not a guaranteed physical power-button press: reconnection
+can also advertise, and a connected controller can stop advertising. BLE identity
+and classification are not authentication. Controllers using rotating private
+addresses may need relearning; this does not pair with or take over the controller.
+
+The list lives in WLED's normal configuration, so configuration backups include
+it. `controller-scan` and the eight `controller1` ... `controller8` settings groups
+apply live; an empty address represents an unused slot. Hardware settings still
+require reboot. The prototype's NVS list is not automatically imported into WLED.
+Saving from the Info panel queues WLED's usual configuration write; wait for it
+to complete before disconnecting power, and verify the list after reboot.
+
+The JSON API reports `BC250Power.controllers` in `/json/state`, including the
+current `revision`, phase (0 idle, 1 baseline, 2 search, 3 confirmation), entries
+and candidates. POST commands use the separate singular `controller` object:
+
+```json
+{"BC250Power":{"controller":{"action":"learn","revision":3}}}
+{"BC250Power":{"controller":{"action":"save","revision":4,"slot":1,"name":"Living room"}}}
+```
+
+Always use the latest reported revision, not the example numbers. Other actions
+are `scanOn`, `scanOff`, `cancel`, `rename`, `enable`, `disable`, and `delete`.
+Slots are one-based; Save refers to a candidate slot, other slot operations to a
+saved controller. Names accept 1–24 printable ASCII characters excluding quotes
+and angle brackets. Invalid/stale commands leave the list unchanged and report a
+message. These commands use the existing WLED JSON endpoint and its access policy.
+
+The parser and learning state machine are shared with
+`experiments/xbox-detector/src/LearningTests.h` (26 prototype self-tests). The
+scanner uses the stable toolchain's [bundled NimBLE stack](https://docs.espressif.com/projects/esp-idf/en/v4.4.8/esp32/api-reference/bluetooth/nimble/index.html)
+in passive observer mode, without an additional Bluetooth library. No WLED
+web-page or core code changes are required for these controls.
+
+The stable Arduino 2 build must use `WLED_USE_SHARED_RMT`, already included in
+`tools/bc250-platformio.ini`. The alternative high-priority LED RMT driver caused
+a Bluetooth interrupt crash during bench testing; the shared RMT build scanned
+successfully. The firmware still fits the existing 1.5 MB OTA application slot.
+
+Bench validation on a spare ESP32 with one Xbox model 1914 verified learning,
+explicit saving, rename, enable/disable, invalid and stale command rejection,
+HTML escaping, and persistence across reboot. A learned controller started the
+simulated PSU without pulsing relay 2; switching LEDs off kept the PSU on.
+These checks used serial JSON with the Wi-Fi access point active. Operation with
+the actual relay hardware, LED load and station Wi-Fi still needs deployment
+testing; only one physical controller was available.
+
 ## Bench acceptance checks
 
 Before connecting relay contacts to the live PC/PSU, verify:
@@ -273,9 +358,12 @@ Before connecting relay contacts to the live PC/PSU, verify:
 - Reset, cold boot, disabled control, and held-at-boot button leave relays off.
 - Invalid, duplicate and occupied pins report `ERROR` without taking other pins.
 - One start press asserts only the PSU relay; holding it does not force shutdown.
-- With all preset IDs zero, WLED master power starts off, turns on with the PSU,
-  and turns off on emergency or automatic cutoff. Conflicting master power from
-  presets or the UI is corrected; colour/effect settings and brightness are retained.
+- With all preset IDs zero, WLED master power starts off; switching it on starts
+  the PSU. Switching it off while running leaves both relay commands unchanged
+  and stays dark across subsequent controller loops. Switching it back on restores
+  lighting without pulsing the board button. A case-button start lights the LEDs.
+- Emergency or automatic cutoff darkens the LEDs without restarting the PSU.
+  Boot brightness and boot presets must not start the PSU after ESP reset.
 - Sense high alone stays `BOOTING`; valid OS readiness changes to `RUNNING`.
 - Short presses give one pulse; long presses give one hold, with no release pulse.
 - A separate 10-second hold releases both relays with sense disconnected or held
@@ -286,7 +374,8 @@ Before connecting relay contacts to the live PC/PSU, verify:
 - Shutdown callback alone keeps the PSU on. Sense loss before ever seeing power
   does not cut it. Brief sense glitches and returning sense cancel cutoff.
 - Verified continuous sense loss cuts power only when automatic cutoff is enabled.
-- Settings saves and lighting preset changes never operate relays by themselves.
+- Settings saves and colour/effect changes do not start power. A non-boot preset
+  that switches WLED master power from off to on can start the PSU.
 - Pulse timing remains acceptable under LED updates, API requests and file writes.
 
 Compilation and desktop tests cannot verify relay polarity, reset glitches,
