@@ -73,3 +73,43 @@ references: the manifest identifies source inputs, not a guarantee of
 bit-for-bit reproducibility of all transitive dependencies.
 
 AI assistance was used to implement this workflow.
+
+## Experimental Wi-Fi task on core 1
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-bc250.ps1 -WifiCore1`
+to test Wi-Fi/Bluetooth task separation on the classic dual-core ESP32.
+This requires the installed Tasmota framework version `2.0.18+sha.8ba0dc0`
+or the verified experimental package from a previous run.
+The script makes a private framework copy in the build directory and verifies
+the original `WiFiGeneric.cpp` hash before setting `cfg.wifi_task_core_id = 1`
+at Wi-Fi initialization. Bluetooth controller and NimBLE remain on core 0.
+The precompiled ESP-IDF libraries are unchanged; this uses the SDK's documented
+[Wi-Fi initialization field](https://docs.espressif.com/projects/esp-idf/en/v4.4.8/esp32/api-reference/network/esp_wifi.html).
+
+The experimental JSON state adds `BC250Power.controllers.taskCores`, reporting
+the affinity of the `wifi`, `btController`, and `ble` (NimBLE host) tasks (`-1` when a
+task is absent). These diagnostics are excluded from normal builds. The scan
+timing remains 10 ms every 200 ms. Wi-Fi and the WLED Arduino loop now share core
+1, so LED timing and web responsiveness both need validation. The radio is still
+shared regardless of CPU affinity. This option does not flash either device.
+Omit `-WifiCore1` to return to the standard framework build.
+PlatformIO selects packages in its shared cache, so switching build types may
+reinstall the framework. The preparation script never patches that shared copy
+in place; subsequent experimental builds validate and copy the cached experiment.
+
+Bench results on the spare ESP32 (2026-10-09), with the same 5% scan timing:
+
+| Firmware | Successful HTTP requests | Median successful response | Maximum successful response |
+| --- | --- | --- | --- |
+| Standard Wi-Fi core 0 | 28/30 | 1.672 s | 5.125 s |
+| Experimental Wi-Fi core 1, final diagnostics | 30/30 | 0.188 s | 0.328 s |
+
+Runtime task queries confirmed Wi-Fi on core 1 and both Bluetooth controller and
+NimBLE host on core 0. Power-state tests also verified that PSU startup cancels
+learning and stops scanning, LED-off does not stop the PSU, and scanning resumes
+after reboot with the PSU off. These are short sequential bench measurements,
+not proof of long-term reliability or performance on the main installation.
+Turning the learned Xbox controller on normally also started the spare's
+simulated PSU, stopped scanning, and left the power-button relay inactive.
+OTA remained unreliable during the experiment; the final spare upload used
+serial and passed flash hash verification. Main-board deployment is not yet tested.

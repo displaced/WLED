@@ -4,7 +4,8 @@
 param(
   [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')][string]$Tag,
   [switch]$Latest,
-  [switch]$PrepareOnly
+  [switch]$PrepareOnly,
+  [switch]$WifiCore1
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -64,6 +65,23 @@ try {
   Copy-Item -LiteralPath $config -Destination (Join-Path $source 'platformio_override.ini')
   $hashes['platformio_override.ini'] = (Get-FileHash $config -Algorithm SHA256).Hash
 
+  # Experimental opt-in: patch a private framework copy, never the installed SDK.
+  if ($WifiCore1) {
+    $frameworkCopy = Join-Path $run 'framework-wifi-core1'
+    & (Join-Path $PSScriptRoot 'prepare-bc250-wifi-core1.ps1') -Destination $frameworkCopy
+    $overridePath = Join-Path $source 'platformio_override.ini'
+    $frameworkUri = 'file://' + $frameworkCopy.Replace('\', '/')
+    Add-Content $overridePath "`nplatform_packages = framework-arduinoespressif32 @ $frameworkUri"
+    # The diagnostic flag belongs to the existing multiline build_flags value.
+    $override = [IO.File]::ReadAllText($overridePath)
+    $flagAnchor = 'build_flags = ${env:esp32dev.build_flags}'
+    if (!$override.Contains($flagAnchor)) { throw 'Build flag anchor changed.' }
+    $override = $override.Replace($flagAnchor, $flagAnchor + "`n  -D BC250_CORE_DIAGNOSTICS")
+    [IO.File]::WriteAllText($overridePath, $override, $utf8)
+    $hashes['platformio_override.ini'] = (Get-FileHash $overridePath).Hash
+    $hashes['framework-core-manifest'] = (Get-FileHash (Join-Path $frameworkCopy 'bc250-core-manifest.json')).Hash
+  }
+
   # Fail closed if upstream consumes our ID or changes the integration anchors.
   $constFile = Join-Path $source 'wled00/const.h'
   $constants = [IO.File]::ReadAllText($constFile)
@@ -108,6 +126,7 @@ const execPromise = (...args) => {
     tag = $Tag; upstreamCommit = $commit; inputs = $hashes
     createdUtc = [DateTime]::UtcNow.ToString('o'); status = 'prepared'
     environment = 'bc250_power'; deployPerformed = $false
+    wifiCore1Experiment = [bool]$WifiCore1
     webTestTimingCorrection = $testTimingFix
   }
   $manifestPath = Join-Path $run 'manifest.json'

@@ -328,6 +328,15 @@ public:
     state["enabled"] = copy.enabled; state["scanning"] = copy.scanning;
     state["revision"] = copy.revision; state["phase"] = uint8_t(copy.learner.phase);
     state["message"] = copy.message;
+#ifdef BC250_CORE_DIAGNOSTICS
+    // Bench-only task-affinity observations; absent tasks are reported as -1.
+    JsonObject cores = state.createNestedObject("taskCores");
+    // This pinned IDF 4.4 SDK names its NimBLE host task "ble".
+    for (const char* name : {"wifi", "btController", "ble"}) {
+      TaskHandle_t task = xTaskGetHandle(name);
+      cores[name] = task ? int(xTaskGetAffinity(task)) : -1;
+    }
+#endif
     JsonArray entries = state.createNestedArray("entries");
     for (size_t i = 0; i < ControllerLearning::MAX_CONTROLLERS; i++) {
       const auto& entry = copy.store.entries[i]; if (!entry.used) continue;
