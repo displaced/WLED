@@ -5,7 +5,8 @@ param(
   [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')][string]$Tag,
   [switch]$Latest,
   [switch]$PrepareOnly,
-  [switch]$WifiCore1
+  [switch]$WifiCore1,
+  [switch]$NoNetworkDebug
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -64,6 +65,16 @@ try {
   $config = Join-Path $PSScriptRoot 'bc250-platformio.ini'
   Copy-Item -LiteralPath $config -Destination (Join-Path $source 'platformio_override.ini')
   $hashes['platformio_override.ini'] = (Get-FileHash $config -Algorithm SHA256).Hash
+
+  # Keep serial diagnostics while excluding the network debug transport entirely.
+  if ($NoNetworkDebug) {
+    $overridePath = Join-Path $source 'platformio_override.ini'
+    $override = [IO.File]::ReadAllText($overridePath)
+    $hostFlag = '(?m)^\s*-D WLED_DEBUG_HOST=[^\r\n]*\r?\n'
+    if ([regex]::Matches($override, $hostFlag).Count -ne 1) { throw 'Network debug flag changed; review before building.' }
+    [IO.File]::WriteAllText($overridePath, [regex]::Replace($override, $hostFlag, ''), $utf8)
+    $hashes['platformio_override.ini'] = (Get-FileHash $overridePath).Hash
+  }
 
   # Experimental opt-in: patch a private framework copy, never the installed SDK.
   if ($WifiCore1) {
@@ -127,6 +138,7 @@ const execPromise = (...args) => {
     createdUtc = [DateTime]::UtcNow.ToString('o'); status = 'prepared'
     environment = 'bc250_power'; deployPerformed = $false
     wifiCore1Experiment = [bool]$WifiCore1
+    networkDebugDisabled = [bool]$NoNetworkDebug
     webTestTimingCorrection = $testTimingFix
   }
   $manifestPath = Join-Path $run 'manifest.json'

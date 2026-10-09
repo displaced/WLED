@@ -74,6 +74,15 @@ bit-for-bit reproducibility of all transitive dependencies.
 
 AI assistance was used to implement this workflow.
 
+## Serial-only debug comparison
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-bc250.ps1 -NoNetworkDebug`
+to build the pinned release without `WLED_DEBUG_HOST`. This excludes network
+logging while retaining `WLED_DEBUG` output over serial. The UDP listener will
+receive no debug messages from this build. Without `-WifiCore1`, it uses the
+standard core-0 framework. LED output, scanning timing, and power logic are
+unchanged. The manifest records this option; the script does not upload firmware.
+
 ## Experimental Wi-Fi task on core 1
 
 Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-bc250.ps1 -WifiCore1`
