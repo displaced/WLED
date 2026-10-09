@@ -283,6 +283,12 @@ Do not deliberately put `osEvent` commands into lighting preset files.
 
 ## Xbox controller learning
 
+Passive scanning requests a 10 ms window every 200 ms (5% nominal duty cycle),
+reduced from 40 ms every 80 ms to give Wi-Fi more opportunity to use the shared
+radio. Actual airtime is controlled by the SDK coexistence scheduler. Detection
+can take longer or miss a brief advertisement burst; close-range controller
+detection latency and Wi-Fi responsiveness must both be checked on the device.
+
 Scanning runs only while the PSU relay is off. PSU startup pauses reception and
 cancels any learning session; PSU shutdown resumes scanning automatically with
 the existing fifteen-second startup guard. Turning only the LEDs off does not

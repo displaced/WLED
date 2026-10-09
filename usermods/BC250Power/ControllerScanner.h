@@ -21,6 +21,11 @@ class ControllerScanner {
   using Store = ControllerLearning::Store;
   using Phase = ControllerLearning::Phase;
   static constexpr size_t QUEUE_SIZE = 32;
+  // BLE shares the radio with Wi-Fi. Accept slower wake detection to request
+  // only 10 ms of passive reception per 200 ms (5% nominal scan duty cycle).
+  // https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/coexist.html
+  static constexpr uint16_t SCAN_INTERVAL = 320; // Units of 0.625 ms.
+  static constexpr uint16_t SCAN_WINDOW = 16;
   struct Observation { Identity id; uint32_t at; int rssi; };
   struct Data {
     Store store;
@@ -163,8 +168,8 @@ public:
         if (ble_hs_id_infer_auto(0, &addressType) == 0) {
           ble_gap_disc_params parameters{};
           parameters.passive = 1;
-          parameters.itvl = 128; // 80 ms, in 0.625 ms units.
-          parameters.window = 64; // 40 ms; leave airtime for Wi-Fi.
+          parameters.itvl = SCAN_INTERVAL;
+          parameters.window = SCAN_WINDOW;
           parameters.filter_duplicates = 0;
           ble_gap_disc(addressType, BLE_HS_FOREVER, &parameters, gapEvent, this);
         }
