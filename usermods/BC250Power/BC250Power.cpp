@@ -332,7 +332,8 @@ class BC250Power : public Usermod {
       // Apply OS state before radio gating so a resume callback stops discovery
       // without leaving one loop in which a late advertisement could pulse relay 2.
       if (psuOn && senseOn && senseRaw) {
-        if (event == OsEvent::Running && state != State::ShuttingDown) transition(State::OsRunning);
+        // A reboot reports shutting_down and then running without losing sense.
+        if (event == OsEvent::Running) transition(State::OsRunning);
         else if (event == OsEvent::Sleeping && (state == State::Powered || state == State::OsRunning)) transition(State::Sleeping);
         else if (event == OsEvent::ShuttingDown) transition(State::ShuttingDown);
       }

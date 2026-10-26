@@ -287,8 +287,9 @@ wins). An HTTP success is not confirmation of a state transition; check
 `GET /json/state`. Events received while disabled, or without stable power sense
 and an asserted PSU relay, do not change state. Stable sense enters `POWERED`;
 `running` then refines that state to `OS_RUNNING`, and a later `running` event
-returns `SLEEPING` to `OS_RUNNING`. Once `SHUTTING_DOWN` is reported, late
-`running` or `sleeping` events cannot reverse it. A sleep event does not disable
+returns `SLEEPING` to `OS_RUNNING`. A stable-sense `running` event also returns
+`SHUTTING_DOWN` to `OS_RUNNING`, which handles an OS reboot where power never
+drops. A `sleeping` event cannot reverse shutdown. A sleep event does not disable
 automatic cutoff, so the sense input must remain active during sleep if PSU power
 is to be retained. OS integration is optional. On a Linux system using systemd,
 install the supplied hooks with:
@@ -435,6 +436,8 @@ Before connecting relay contacts to the live PC/PSU, verify:
 - Sense high changes `STARTING` to `POWERED` without an OS callback.
 - With stable sense, `running` changes `POWERED` or `SLEEPING` to `OS_RUNNING`,
   and `sleeping` changes `POWERED` or `OS_RUNNING` to `SLEEPING`.
+- With stable sense throughout an OS reboot, `shutting_down` followed by `running`
+  changes `SHUTTING_DOWN` back to `OS_RUNNING`.
 - In `SLEEPING`, scanning resumes after its fifteen-second guard. A newly seen
   learned controller pulses only relay 2 once; the PSU relay stays asserted.
   The subsequent `running` callback stops scanning without another pulse.
