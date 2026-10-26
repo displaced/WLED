@@ -239,7 +239,7 @@ LED/network load before attaching the PC button contacts.
 | `boot-timeout-ms` | 120000 | 5000–600000 ms; sense timeout only, no forced cutoff |
 | `powered-preset` | 0 | 0–250; applied on `POWERED` |
 | `os-running-preset` | 0 | 0–250; applied on `OS_RUNNING` |
-| `sleeping-preset` | 0 | 0–250; applied on `SLEEPING` |
+| `sleep-preset` | 0 | 0–250; applied on `SLEEPING` |
 | `shutting-down-preset` | 0 | 0–250; applied on `SHUTTING_DOWN` |
 
 Preset 0 leaves lighting appearance unchanged; master power still follows the PSU.
@@ -330,9 +330,11 @@ Do not deliberately put `osEvent` commands into lighting preset files.
 
 Passive scanning requests a 10 ms window every 200 ms (5% nominal duty cycle),
 reduced from 40 ms every 80 ms to give Wi-Fi more opportunity to use the shared
-radio. Actual airtime is controlled by the SDK coexistence scheduler. Detection
-can take longer or miss a brief advertisement burst; close-range controller
-detection latency and Wi-Fi responsiveness must both be checked on the device.
+radio. The scanner also requests the SDK's Wi-Fi-preferred coexistence policy;
+controller detection can tolerate lower Bluetooth priority. Actual airtime is
+controlled by the SDK coexistence scheduler. Detection can take longer or miss a
+brief advertisement burst; close-range controller detection latency and Wi-Fi
+responsiveness must both be checked on the device.
 
 Scanning runs while the PSU relay is off and while the OS reports `SLEEPING`.
 PSU startup and the `running` callback pause reception and cancel any learning
@@ -384,6 +386,11 @@ apply live; an empty address represents an unused slot. Hardware settings still
 require reboot. The prototype's NVS list is not automatically imported into WLED.
 Saving from the Info panel queues WLED's usual configuration write; wait for it
 to complete before disconnecting power, and verify the list after reboot.
+
+The sleeping LED preset is stored as `sleep-preset`. Older configurations using
+`sleeping-preset` migrate automatically; the shorter name avoids WLED's generic
+settings-page heuristic that mistakes any numeric field containing `pin` for a
+GPIO selector.
 
 The JSON API reports `BC250Power.controllers` in `/json/state`, including the
 current `revision`, phase (0 idle, 1 baseline, 2 search, 3 confirmation), entries

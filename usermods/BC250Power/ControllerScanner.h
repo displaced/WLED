@@ -3,6 +3,7 @@
 #include "ControllerLearning.h"
 #include <esp32-hal-bt.h>
 #include <esp_bt.h>
+#include <esp_coexist.h>
 #include <esp_idf_version.h>
 #include <nimble/nimble_port.h>
 #include <nimble/nimble_port_freertos.h>
@@ -158,7 +159,13 @@ public:
 #else
         radioReady = nimble_port_init() == ESP_OK;
 #endif
-        if (radioReady) nimble_port_freertos_init(hostTask);
+        if (radioReady) {
+          // Controller wake detection tolerates latency; preserve Wi-Fi access
+          // by asking the SDK coexistence scheduler to favor Wi-Fi airtime.
+          const esp_err_t coexResult = esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+          DEBUG_PRINTF_P(PSTR("BC250Power: Wi-Fi coexistence preference %s\n"), coexResult == ESP_OK ? "set" : "failed");
+          nimble_port_freertos_init(hostTask);
+        }
       }
     }
     bool scanning = false;

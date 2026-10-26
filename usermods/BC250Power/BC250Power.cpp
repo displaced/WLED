@@ -25,10 +25,11 @@ class BC250Power : public Usermod {
     static const char KEY_BOOT_TIMEOUT_MS[];
     static const char KEY_POWERED_PRESET[];
     static const char KEY_OS_RUNNING_PRESET[];
-    static const char KEY_SLEEPING_PRESET[];
+    static const char KEY_SLEEP_PRESET[];
     static const char KEY_SHUTTING_DOWN_PRESET[];
     static const char KEY_LEGACY_BOOTING_PRESET[];
     static const char KEY_LEGACY_RUNNING_PRESET[];
+    static const char KEY_LEGACY_SLEEPING_PRESET[];
     static const char KEY_LEGACY_SHUTDOWN_PRESET[];
     static constexpr uint8_t PIN_COUNT = 4;
     static constexpr uint8_t PSU = 0, POWER_BUTTON = 1, CASE_BUTTON = 2, SENSE = 3;
@@ -441,7 +442,9 @@ class BC250Power : public Usermod {
       top[FPSTR(KEY_BOOT_TIMEOUT_MS)] = saved.bootTimeoutMs;
       top[FPSTR(KEY_POWERED_PRESET)] = saved.presets[0];
       top[FPSTR(KEY_OS_RUNNING_PRESET)] = saved.presets[1];
-      top[FPSTR(KEY_SLEEPING_PRESET)] = saved.presets[2];
+      // Avoid "sleeping-preset": WLED's generic form treats any numeric field
+      // containing "pin" as a GPIO selector ("sleeping" contains that substring).
+      top[FPSTR(KEY_SLEEP_PRESET)] = saved.presets[2];
       top[FPSTR(KEY_SHUTTING_DOWN_PRESET)] = saved.presets[3];
       controllers.addConfig(top);
     }
@@ -474,7 +477,10 @@ class BC250Power : public Usermod {
         complete = false;
         readNumber(top[FPSTR(KEY_LEGACY_RUNNING_PRESET)], candidate.presets[1], 0, 250);
       } else complete &= readNumber(top[FPSTR(KEY_OS_RUNNING_PRESET)], candidate.presets[1], 0, 250);
-      complete &= readNumber(top[FPSTR(KEY_SLEEPING_PRESET)], candidate.presets[2], 0, 250);
+      if (top[FPSTR(KEY_SLEEP_PRESET)].isNull()) {
+        complete = false;
+        readNumber(top[FPSTR(KEY_LEGACY_SLEEPING_PRESET)], candidate.presets[2], 0, 250);
+      } else complete &= readNumber(top[FPSTR(KEY_SLEEP_PRESET)], candidate.presets[2], 0, 250);
       if (top[FPSTR(KEY_SHUTTING_DOWN_PRESET)].isNull()) {
         complete = false;
         readNumber(top[FPSTR(KEY_LEGACY_SHUTDOWN_PRESET)], candidate.presets[3], 0, 250);
@@ -516,10 +522,11 @@ const char BC250Power::KEY_OFF_GRACE_MS[] PROGMEM = "off-grace-ms";
 const char BC250Power::KEY_BOOT_TIMEOUT_MS[] PROGMEM = "boot-timeout-ms";
 const char BC250Power::KEY_POWERED_PRESET[] PROGMEM = "powered-preset";
 const char BC250Power::KEY_OS_RUNNING_PRESET[] PROGMEM = "os-running-preset";
-const char BC250Power::KEY_SLEEPING_PRESET[] PROGMEM = "sleeping-preset";
+const char BC250Power::KEY_SLEEP_PRESET[] PROGMEM = "sleep-preset";
 const char BC250Power::KEY_SHUTTING_DOWN_PRESET[] PROGMEM = "shutting-down-preset";
 const char BC250Power::KEY_LEGACY_BOOTING_PRESET[] PROGMEM = "booting-preset";
 const char BC250Power::KEY_LEGACY_RUNNING_PRESET[] PROGMEM = "running-preset";
+const char BC250Power::KEY_LEGACY_SLEEPING_PRESET[] PROGMEM = "sleeping-preset";
 const char BC250Power::KEY_LEGACY_SHUTDOWN_PRESET[] PROGMEM = "shutdown-preset";
 static BC250Power bc250Power;
 REGISTER_USERMOD(bc250Power);
