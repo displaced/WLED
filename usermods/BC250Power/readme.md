@@ -180,14 +180,14 @@ defaults (or the previously saved value), so future settings can be added safely
   Emergency or automatic PSU cutoff switches the LEDs off. Presets may still
   select appearance, brightness and lighting power while the PSU is running.
   Disabled control or invalid pins do not enforce WLED master power.
-- `OFF` + debounced case-button press asserts PS_ON# and enters `BOOTING`.
+- `OFF` + debounced case-button press asserts PS_ON# and enters `STARTING`.
   The same held press is consumed until release; it cannot also force shutdown.
   A button held during ESP startup is ignored until released.
 - This version assumes the BC-250 starts when 12 V is applied. It does not
   automatically pulse the board button at power-on. If needed, a subsequent
   short case-button press provides that pulse.
-- Sense high confirms electrical power, not OS readiness. A `running` callback
-  with stable sense high moves `BOOTING` (or timeout `ERROR`) to `RUNNING`.
+- Stable sense high confirms electrical power and moves `STARTING` to `POWERED`.
+  This reports only what the ESP can observe; it does not claim the OS has booted.
 - While the PSU is on, a short press pulses the board button on release. The OS
   decides the result; the pulse alone does not claim shutdown has started.
 - Holding the case button for `long-press-ms` starts one `force-hold-ms` board
@@ -200,17 +200,19 @@ defaults (or the previously saved value), so future settings can be added safely
   The initial power-on press and a button held during ESP boot are exempt.
   After emergency cutoff, stuck-high sense does not change `OFF` to `ERROR`,
   but starting power again still requires sense to become inactive and a new press.
-- A `shutting_down` callback enters `SHUTTING_DOWN`. Neither OS callback directly
-  releases PS_ON#; late `running` callbacks cannot reverse `SHUTTING_DOWN`.
+- Optional `running`, `sleeping`, and `shutting_down` callbacks enter `OS_RUNNING`,
+  `SLEEPING`, and `SHUTTING_DOWN` respectively. The callbacks do not directly
+  operate either relay, and late callbacks cannot reverse `SHUTTING_DOWN`.
 - Once sense has been observed high in the current power cycle, stable sense loss
   starts the cutoff grace period. If automatic cutoff is enabled and sense stays inactive
   through the grace period, both relays release and the state becomes `OFF`.
   Sense returning during the grace period prevents cutoff. Sense loss alone does
   not change the reported OS state during that period or apply a shutdown preset;
   the shutdown callback supplies that semantic event.
-- A boot timeout enters `ERROR` and keeps PS_ON# asserted. If sense was never
-  observed, the firmware never guesses that removing power is safe. Check wiring
-  and the PC before using the emergency hold. There is no remote hard-cut API.
+- If sense does not become active before the boot timeout, the state enters
+  `ERROR` and keeps PS_ON# asserted. The firmware never guesses that removing
+  power is safe. Check wiring and the PC before using the emergency hold. A late
+  valid sense signal recovers to `POWERED`. There is no remote hard-cut API.
 - A sense signal already high with PS_ON# off reports `ERROR`; it does not
   automatically energize the PSU relay. Stable sense low clears that condition.
 
@@ -234,23 +236,28 @@ LED/network load before attaching the PC button contacts.
 | `force-hold-ms` | 5000 | 3000–15000 ms |
 | `sense-debounce-ms` | 100 | 20–2000 ms |
 | `off-grace-ms` | 2000 | 100–60000 ms, after debounced sense loss |
-| `boot-timeout-ms` | 120000 | 5000–600000 ms; error only, no forced cutoff |
-| `booting-preset` | 0 | 0–250 |
-| `running-preset` | 0 | 0–250 |
-| `shutdown-preset` | 0 | 0–250 |
-| `error-preset` | 0 | 0–250 |
+| `boot-timeout-ms` | 120000 | 5000–600000 ms; sense timeout only, no forced cutoff |
+| `powered-preset` | 0 | 0–250; applied on `POWERED` |
+| `os-running-preset` | 0 | 0–250; applied on `OS_RUNNING` |
+| `sleeping-preset` | 0 | 0–250; applied on `SLEEPING` |
+| `shutting-down-preset` | 0 | 0–250; applied on `SHUTTING_DOWN` |
 
 Preset 0 leaves lighting appearance unchanged; master power still follows the PSU.
 Other IDs use WLED's normal preset application and can refer to playlist presets.
-Only transitions apply presets. No OFF preset is needed: the controller turns
-WLED master power off when the PSU relay releases. Input GPIOs without
-internal pull support require appropriate external resistors if reassigned.
+Only transitions apply presets. `OFF`, `STARTING`, and `ERROR` do not apply a
+preset. No OFF preset is needed: the controller turns WLED master power off when
+the PSU relay releases. During migration, old `booting-preset`, `running-preset`,
+and `shutdown-preset` values initialize `POWERED`, `OS_RUNNING`, and
+`SHUTTING_DOWN` respectively; the next configuration write uses the new keys.
+Input GPIOs without internal pull support require appropriate external resistors
+if reassigned.
 
 ## OS callbacks and status
 
 Use the existing WLED JSON API on your trusted LAN. This usermod adds no separate
 HTTP server or authentication mechanism; existing WLED endpoint policy applies.
-POST the following to `http://WLED-IP/json/state` when the OS is ready:
+The electrical state does not require OS integration. Optionally POST the
+following to `http://WLED-IP/json/state` when the OS is ready:
 
 ```json
 {"BC250Power":{"osEvent":"running"}}
@@ -260,6 +267,12 @@ At shutdown start, while networking is still available:
 
 ```json
 {"BC250Power":{"osEvent":"shutting_down"}}
+```
+
+Immediately before entering sleep:
+
+```json
+{"BC250Power":{"osEvent":"sleeping"}}
 ```
 
 Example from the BC-250:
@@ -272,9 +285,13 @@ curl --fail --max-time 3 -H 'Content-Type: application/json' \
 The callbacks are queued for the next loop iteration (the latest pending event
 wins). An HTTP success is not confirmation of a state transition; check
 `GET /json/state`. Events received while disabled, or without stable power sense
-and an asserted PSU relay, do not change state. Retry `running` if it arrives
-before the sense input stabilizes. Actual Bazzite/systemd integration is a later
-hardware setup step; no services are installed by this repository change.
+and an asserted PSU relay, do not change state. Stable sense enters `POWERED`;
+`running` then refines that state to `OS_RUNNING`, and a later `running` event
+returns `SLEEPING` to `OS_RUNNING`. Once `SHUTTING_DOWN` is reported, late
+`running` or `sleeping` events cannot reverse it. A sleep event does not disable
+automatic cutoff, so the sense input must remain active during sleep if PSU power
+is to be retained. OS integration is optional; no services are installed by this
+repository change.
 
 `GET /json/state` includes `BC250Power` with `state`, `psuOn`, `buttonRelayOn`,
 `powerSense`, `pinsReady`, `enabled`, `rebootRequired`, and `configRejected`. `osEvent` is never
@@ -384,14 +401,16 @@ Before connecting relay contacts to the live PC/PSU, verify:
   lighting without pulsing the board button. A case-button start lights the LEDs.
 - Emergency or automatic cutoff darkens the LEDs without restarting the PSU.
   Boot brightness and boot presets must not start the PSU after ESP reset.
-- Sense high alone stays `BOOTING`; valid OS readiness changes to `RUNNING`.
+- Sense high changes `STARTING` to `POWERED` without an OS callback.
+- With stable sense, `running` changes `POWERED` or `SLEEPING` to `OS_RUNNING`,
+  and `sleeping` changes `POWERED` or `OS_RUNNING` to `SLEEPING`.
 - Short presses give one pulse; long presses give one hold, with no release pulse.
 - A separate 10-second hold releases both relays with sense disconnected or held
   active, even with automatic cutoff disabled. Releasing before 10 seconds does
   not force PSU cutoff. Continuing to hold after cutoff does not restart power.
-- Missing readiness gives `ERROR` without removing power; a later valid callback
-  recovers to `RUNNING` if shutdown has not started.
-- Shutdown callback alone keeps the PSU on. Sense loss before ever seeing power
+- Missing sense gives `ERROR` without removing power; a later valid sense signal
+  recovers to `POWERED` if shutdown has not started.
+- OS callbacks alone keep the PSU on. Sense loss before ever seeing power
   does not cut it. Brief sense glitches and returning sense cancel cutoff.
 - Verified continuous sense loss cuts power only when automatic cutoff is enabled.
 - Settings saves and colour/effect changes do not start power. A non-boot preset

@@ -8,8 +8,8 @@
 // Integration follows usermods/EXAMPLE; behavior follows the personal BC-250 handoff.
 class BC250Power : public Usermod {
   private:
-    enum class State : uint8_t { Off, Booting, Running, ShuttingDown, Error };
-    enum class OsEvent : uint8_t { None, Running, ShuttingDown };
+    enum class State : uint8_t { Off, Starting, Powered, OsRunning, Sleeping, ShuttingDown, Error };
+    enum class OsEvent : uint8_t { None, Running, Sleeping, ShuttingDown };
     static const char NAME[];
     static const char KEY_ENABLED[];
     static const char KEY_PIN[];
@@ -23,10 +23,13 @@ class BC250Power : public Usermod {
     static const char KEY_SENSE_DEBOUNCE_MS[];
     static const char KEY_OFF_GRACE_MS[];
     static const char KEY_BOOT_TIMEOUT_MS[];
-    static const char KEY_BOOTING_PRESET[];
-    static const char KEY_RUNNING_PRESET[];
-    static const char KEY_SHUTDOWN_PRESET[];
-    static const char KEY_ERROR_PRESET[];
+    static const char KEY_POWERED_PRESET[];
+    static const char KEY_OS_RUNNING_PRESET[];
+    static const char KEY_SLEEPING_PRESET[];
+    static const char KEY_SHUTTING_DOWN_PRESET[];
+    static const char KEY_LEGACY_BOOTING_PRESET[];
+    static const char KEY_LEGACY_RUNNING_PRESET[];
+    static const char KEY_LEGACY_SHUTDOWN_PRESET[];
     static constexpr uint8_t PIN_COUNT = 4;
     static constexpr uint8_t PSU = 0, POWER_BUTTON = 1, CASE_BUTTON = 2, SENSE = 3;
     static constexpr uint32_t DEBOUNCE_MS = 40;
@@ -45,7 +48,7 @@ class BC250Power : public Usermod {
       uint32_t senseDebounceMs = 100;
       uint32_t offGraceMs = 2000;
       uint32_t bootTimeoutMs = 120000;
-      uint8_t presets[4] = {0, 0, 0, 0}; // Booting, running, shutdown, error.
+      uint8_t presets[4] = {0, 0, 0, 0}; // Powered, OS running, sleeping, shutting down.
     } saved, active;
 
     // Config edits are staged until reboot; only loop() owns live GPIO/state changes.
@@ -72,10 +75,23 @@ class BC250Power : public Usermod {
     static const char* stateName(State value) {
       switch (value) {
         case State::Off: return "OFF";
-        case State::Booting: return "BOOTING";
-        case State::Running: return "RUNNING";
+        case State::Starting: return "STARTING";
+        case State::Powered: return "POWERED";
+        case State::OsRunning: return "OS_RUNNING";
+        case State::Sleeping: return "SLEEPING";
         case State::ShuttingDown: return "SHUTTING_DOWN";
         default: return "ERROR";
+      }
+    }
+
+    // Preserve the four existing preset meanings independently of enum values.
+    uint8_t presetFor(State value) const {
+      switch (value) {
+        case State::Powered: return active.presets[0];
+        case State::OsRunning: return active.presets[1];
+        case State::Sleeping: return active.presets[2];
+        case State::ShuttingDown: return active.presets[3];
+        default: return 0;
       }
     }
 
@@ -90,7 +106,7 @@ class BC250Power : public Usermod {
       if (state == next) return;
       DEBUG_PRINTF_P(PSTR("BC250Power: %s -> %s\n"), stateName(state), stateName(next));
       state = next;
-      pendingPreset = next == State::Off ? 0 : active.presets[uint8_t(next) - 1];
+      pendingPreset = presetFor(next);
     }
 
     // Consume once, including initialization errors that prevent GPIO control.
@@ -158,7 +174,7 @@ class BC250Power : public Usermod {
       bootStartedAt = now;
       psuOn = true;
       writeRelay(PSU, true);
-      transition(State::Booting);
+      transition(State::Starting);
       setLedPower(true);
     }
 
@@ -174,7 +190,11 @@ class BC250Power : public Usermod {
         DEBUG_PRINTF_P(PSTR("BC250Power: power sense %s\n"), senseOn ? "active" : "inactive");
         if (!senseOn) senseLostAt = now;
       }
-      if (senseOn && psuOn) seenPower = true;
+      if (senseOn && psuOn) {
+        seenPower = true;
+        // Sense confirms electrical power. OS readiness callbacks are optional.
+        if (state == State::Starting || state == State::Error) transition(State::Powered);
+      }
       if (!senseOn) emergencyOff = false;
       if (senseOn && !psuOn && !emergencyOff) transition(State::Error);
       if (!senseOn && !psuOn && state == State::Error) transition(State::Off);
@@ -316,12 +336,13 @@ class BC250Power : public Usermod {
       // It never extends an existing pulse or changes controller/lighting state.
       if (pendingButtonPress.exchange(false)) startPulse(now, active.pulseMs, true);
       if (psuOn && senseOn && senseRaw) {
-        if (event == OsEvent::Running && (state == State::Booting || state == State::Error)) transition(State::Running);
-        if (event == OsEvent::ShuttingDown) transition(State::ShuttingDown);
+        if (event == OsEvent::Running && state != State::ShuttingDown) transition(State::OsRunning);
+        else if (event == OsEvent::Sleeping && (state == State::Powered || state == State::OsRunning)) transition(State::Sleeping);
+        else if (event == OsEvent::ShuttingDown) transition(State::ShuttingDown);
       }
       updateButton(now);
-      if (state == State::Booting && uint32_t(now - bootStartedAt) >= active.bootTimeoutMs) {
-        // Missing OS readiness is an error, never justification to remove main power.
+      if (state == State::Starting && uint32_t(now - bootStartedAt) >= active.bootTimeoutMs) {
+        // Missing power sense is an error, never justification to remove main power.
         transition(State::Error);
       }
       publishStatus();
@@ -358,6 +379,7 @@ class BC250Power : public Usermod {
       if (!event.is<const char*>()) return;
       const char* text = event.as<const char*>();
       if (strncmp(text, "running", sizeof("running")) == 0) pendingEvent.store(OsEvent::Running);
+      else if (strncmp(text, "sleeping", sizeof("sleeping")) == 0) pendingEvent.store(OsEvent::Sleeping);
       else if (strncmp(text, "shutting_down", sizeof("shutting_down")) == 0) pendingEvent.store(OsEvent::ShuttingDown);
     }
 
@@ -409,10 +431,10 @@ class BC250Power : public Usermod {
       top[FPSTR(KEY_SENSE_DEBOUNCE_MS)] = saved.senseDebounceMs;
       top[FPSTR(KEY_OFF_GRACE_MS)] = saved.offGraceMs;
       top[FPSTR(KEY_BOOT_TIMEOUT_MS)] = saved.bootTimeoutMs;
-      top[FPSTR(KEY_BOOTING_PRESET)] = saved.presets[0];
-      top[FPSTR(KEY_RUNNING_PRESET)] = saved.presets[1];
-      top[FPSTR(KEY_SHUTDOWN_PRESET)] = saved.presets[2];
-      top[FPSTR(KEY_ERROR_PRESET)] = saved.presets[3];
+      top[FPSTR(KEY_POWERED_PRESET)] = saved.presets[0];
+      top[FPSTR(KEY_OS_RUNNING_PRESET)] = saved.presets[1];
+      top[FPSTR(KEY_SLEEPING_PRESET)] = saved.presets[2];
+      top[FPSTR(KEY_SHUTTING_DOWN_PRESET)] = saved.presets[3];
       controllers.addConfig(top);
     }
 
@@ -436,10 +458,19 @@ class BC250Power : public Usermod {
       complete &= readNumber(top[FPSTR(KEY_SENSE_DEBOUNCE_MS)], candidate.senseDebounceMs, 20, 2000);
       complete &= readNumber(top[FPSTR(KEY_OFF_GRACE_MS)], candidate.offGraceMs, 100, 60000);
       complete &= readNumber(top[FPSTR(KEY_BOOT_TIMEOUT_MS)], candidate.bootTimeoutMs, 5000, 600000);
-      complete &= readNumber(top[FPSTR(KEY_BOOTING_PRESET)], candidate.presets[0], 0, 250);
-      complete &= readNumber(top[FPSTR(KEY_RUNNING_PRESET)], candidate.presets[1], 0, 250);
-      complete &= readNumber(top[FPSTR(KEY_SHUTDOWN_PRESET)], candidate.presets[2], 0, 250);
-      complete &= readNumber(top[FPSTR(KEY_ERROR_PRESET)], candidate.presets[3], 0, 250);
+      if (top[FPSTR(KEY_POWERED_PRESET)].isNull()) {
+        complete = false;
+        readNumber(top[FPSTR(KEY_LEGACY_BOOTING_PRESET)], candidate.presets[0], 0, 250);
+      } else complete &= readNumber(top[FPSTR(KEY_POWERED_PRESET)], candidate.presets[0], 0, 250);
+      if (top[FPSTR(KEY_OS_RUNNING_PRESET)].isNull()) {
+        complete = false;
+        readNumber(top[FPSTR(KEY_LEGACY_RUNNING_PRESET)], candidate.presets[1], 0, 250);
+      } else complete &= readNumber(top[FPSTR(KEY_OS_RUNNING_PRESET)], candidate.presets[1], 0, 250);
+      complete &= readNumber(top[FPSTR(KEY_SLEEPING_PRESET)], candidate.presets[2], 0, 250);
+      if (top[FPSTR(KEY_SHUTTING_DOWN_PRESET)].isNull()) {
+        complete = false;
+        readNumber(top[FPSTR(KEY_LEGACY_SHUTDOWN_PRESET)], candidate.presets[3], 0, 250);
+      } else complete &= readNumber(top[FPSTR(KEY_SHUTTING_DOWN_PRESET)], candidate.presets[3], 0, 250);
       // Reject the entire edit, including enable/polarity, if any supplied value is malformed.
       if (configRejected.load()) return false;
       if (!controllers.readConfig(top)) { configRejected.store(true); return false; }
@@ -455,7 +486,7 @@ class BC250Power : public Usermod {
       oappend(F("addInfo('BC250Power:pin[]',2,'Case button');"));
       oappend(F("addInfo('BC250Power:pin[]',3,'Power sense');"));
       oappend(F("addInfo('BC250Power:automatic-cutoff',1,'Enable only after verifying sense goes inactive at shutdown with PSU still on.');"));
-      oappend(F("addInfo('BC250Power:booting-preset',1,'0 keeps appearance. WLED on starts PSU; WLED off only darkens LEDs.');"));
+      oappend(F("addInfo('BC250Power:powered-preset',1,'0 keeps appearance. WLED on starts PSU; WLED off only darkens LEDs.');"));
       oappend(F("addInfo('BC250Power:controller-scan',1,'Live setting. Use Info / Xbox learning to learn, rename or delete controllers. Empty address means unused slot.');"));
     }
 
@@ -475,10 +506,13 @@ const char BC250Power::KEY_FORCE_HOLD_MS[] PROGMEM = "force-hold-ms";
 const char BC250Power::KEY_SENSE_DEBOUNCE_MS[] PROGMEM = "sense-debounce-ms";
 const char BC250Power::KEY_OFF_GRACE_MS[] PROGMEM = "off-grace-ms";
 const char BC250Power::KEY_BOOT_TIMEOUT_MS[] PROGMEM = "boot-timeout-ms";
-const char BC250Power::KEY_BOOTING_PRESET[] PROGMEM = "booting-preset";
-const char BC250Power::KEY_RUNNING_PRESET[] PROGMEM = "running-preset";
-const char BC250Power::KEY_SHUTDOWN_PRESET[] PROGMEM = "shutdown-preset";
-const char BC250Power::KEY_ERROR_PRESET[] PROGMEM = "error-preset";
+const char BC250Power::KEY_POWERED_PRESET[] PROGMEM = "powered-preset";
+const char BC250Power::KEY_OS_RUNNING_PRESET[] PROGMEM = "os-running-preset";
+const char BC250Power::KEY_SLEEPING_PRESET[] PROGMEM = "sleeping-preset";
+const char BC250Power::KEY_SHUTTING_DOWN_PRESET[] PROGMEM = "shutting-down-preset";
+const char BC250Power::KEY_LEGACY_BOOTING_PRESET[] PROGMEM = "booting-preset";
+const char BC250Power::KEY_LEGACY_RUNNING_PRESET[] PROGMEM = "running-preset";
+const char BC250Power::KEY_LEGACY_SHUTDOWN_PRESET[] PROGMEM = "shutdown-preset";
 static BC250Power bc250Power;
 REGISTER_USERMOD(bc250Power);
 // AI: end
