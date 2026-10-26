@@ -333,10 +333,12 @@ radio. Actual airtime is controlled by the SDK coexistence scheduler. Detection
 can take longer or miss a brief advertisement burst; close-range controller
 detection latency and Wi-Fi responsiveness must both be checked on the device.
 
-Scanning runs only while the PSU relay is off. PSU startup pauses reception and
-cancels any learning session; PSU shutdown resumes scanning automatically with
-the existing fifteen-second startup guard. Turning only the LEDs off does not
-resume scanning. The Bluetooth stack stays initialized, but discovery is stopped.
+Scanning runs while the PSU relay is off and while the OS reports `SLEEPING`.
+PSU startup and the `running` callback pause reception and cancel any learning
+session. PSU shutdown and the `sleeping` callback resume scanning automatically
+with the existing fifteen-second startup guard. Turning only the LEDs off does
+not resume scanning. The Bluetooth stack stays initialized, but discovery is
+stopped while the BC250 is awake.
 
 Before starting Bluetooth scanning, open **Config > WiFi Setup**, uncheck
 **Disable WiFi sleep**, save, and reboot with the PSU off. The stable Arduino 2
@@ -360,12 +362,14 @@ advertise gamepad appearance, Microsoft's company ID and the HID service togethe
 with at least three observations spanning 200 ms. Baseline devices and saved
 controllers are excluded. There is no automatic selection when several appear.
 
-Saved enabled controllers request the normal PSU startup sequence only when the
-PSU is off and the power controller is enabled with valid pins. Detection while
-the PSU is on does nothing: it does not operate relay 2, wake a sleeping PC or
-change LEDs. The separate **Power Button** remains available for waking from sleep.
-Learning and configuration changes do not request startup. Detection is inhibited
-for fifteen seconds after scanning starts, list edits, and PSU shutdown.
+Saved enabled controllers request the normal PSU startup sequence when the PSU is
+off. While the state is `SLEEPING`, detection instead pulses relay 2 once for the
+configured short-press duration, leaving the PSU relay and LEDs unchanged. Other
+powered states do not scan. The power controller must be enabled with valid pins.
+The separate **Power Button** remains available for manual wakeup. Learning and
+configuration changes do not request startup or wakeup. Detection is inhibited
+for fifteen seconds after scanning starts, list edits, PSU shutdown, and entry
+into sleep.
 
 A fifteen-second gap in advertisements rearms detection. This observes an
 advertising appearance, not a guaranteed physical power-button press: reconnection
@@ -431,6 +435,9 @@ Before connecting relay contacts to the live PC/PSU, verify:
 - Sense high changes `STARTING` to `POWERED` without an OS callback.
 - With stable sense, `running` changes `POWERED` or `SLEEPING` to `OS_RUNNING`,
   and `sleeping` changes `POWERED` or `OS_RUNNING` to `SLEEPING`.
+- In `SLEEPING`, scanning resumes after its fifteen-second guard. A newly seen
+  learned controller pulses only relay 2 once; the PSU relay stays asserted.
+  The subsequent `running` callback stops scanning without another pulse.
 - Short presses give one pulse; long presses give one hold, with no release pulse.
 - A separate 10-second hold releases both relays with sense disconnected or held
   active, even with automatic cutoff disabled. Releasing before 10 seconds does

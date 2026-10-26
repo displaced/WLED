@@ -323,23 +323,30 @@ class BC250Power : public Usermod {
       const uint32_t now = millis();
       if (pulseActive && uint32_t(now - pulseStartedAt) >= pulseDuration) stopPulse();
       updateSense(now);
-      const bool controllerDetected = controllers.loop(now, psuOn, !pulseActive);
       if (!active.enabled) {
+        controllers.loop(now, true, false);
         publishStatus();
         return;
       }
       const OsEvent event = pendingEvent.exchange(OsEvent::None);
-      if (pendingLedOff.exchange(false) && !psuOn) setLedPower(false);
-      if (pendingPowerOn.exchange(false)) startPower(now);
-      if (controllerDetected) startPower(now);
-      // The Info-panel button operates only relay 2, even with the PSU relay off.
-      // It never extends an existing pulse or changes controller/lighting state.
-      if (pendingButtonPress.exchange(false)) startPulse(now, active.pulseMs, true);
+      // Apply OS state before radio gating so a resume callback stops discovery
+      // without leaving one loop in which a late advertisement could pulse relay 2.
       if (psuOn && senseOn && senseRaw) {
         if (event == OsEvent::Running && state != State::ShuttingDown) transition(State::OsRunning);
         else if (event == OsEvent::Sleeping && (state == State::Powered || state == State::OsRunning)) transition(State::Sleeping);
         else if (event == OsEvent::ShuttingDown) transition(State::ShuttingDown);
       }
+      const bool controllerScanBlocked = psuOn && state != State::Sleeping;
+      const bool controllerDetected = controllers.loop(now, controllerScanBlocked, !pulseActive);
+      if (pendingLedOff.exchange(false) && !psuOn) setLedPower(false);
+      if (pendingPowerOn.exchange(false)) startPower(now);
+      if (controllerDetected) {
+        if (state == State::Sleeping) startPulse(now, active.pulseMs);
+        else startPower(now);
+      }
+      // The Info-panel button operates only relay 2, even with the PSU relay off.
+      // It never extends an existing pulse or changes controller/lighting state.
+      if (pendingButtonPress.exchange(false)) startPulse(now, active.pulseMs, true);
       updateButton(now);
       if (state == State::Starting && uint32_t(now - bootStartedAt) >= active.bootTimeoutMs) {
         // Missing power sense is an error, never justification to remove main power.

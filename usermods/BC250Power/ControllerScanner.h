@@ -42,7 +42,7 @@ class ControllerScanner {
   uint32_t lastSeen[ControllerLearning::MAX_CONTROLLERS]{};
   uint32_t inhibitedAt = 0;
   uint32_t scanAttemptAt = 0;
-  bool inhibited = true, previouslyPowered = false;
+  bool inhibited = true, previouslyBlocked = false;
 
   // Only short RAM operations use this lock; radio startup and HTML creation do not.
   bool lock() { return mutex && xSemaphoreTake(mutex, pdMS_TO_TICKS(20)) == pdTRUE; }
@@ -135,14 +135,15 @@ public:
   }
 
   // Called by WLED's main loop. Radio startup is deferred until the user opts in.
-  // Return only a startup request; the power controller applies its own guards.
-  bool loop(uint32_t now, bool powered, bool allowInit) {
+  // Return one learned-controller detection; the power controller decides whether
+  // that means PSU startup or a power-button pulse for sleep wakeup.
+  bool loop(uint32_t now, bool blocked, bool allowInit) {
     bool enabled;
     if (!lock()) return false;
     enabled = data.enabled;
     unlock();
     if (dirty.exchange(false)) configNeedsWrite = true;
-    const bool shouldScan = enabled && !powered;
+    const bool shouldScan = enabled && !blocked;
     if (shouldScan && !attempted && allowInit) {
       attempted = true;
       observations = xQueueCreate(QUEUE_SIZE, sizeof(Observation));
@@ -185,16 +186,16 @@ public:
       DEBUG_PRINTF_P(PSTR("BC250Power: controller scanning %s\n"), scanning ? "started" : "stopped");
     }
     data.scanning = scanning;
-    // Stop learning as well as reception while the PSU is on. Keep the user's
-    // enable setting so scanning resumes automatically after PSU shutdown.
-    if (powered && data.learner.phase != Phase::Idle) {
+    // Stop learning as well as reception while the PC is awake. Keep the user's
+    // enable setting so scanning resumes automatically after sleep or shutdown.
+    if (blocked && data.learner.phase != Phase::Idle) {
       data.learner.cancel();
       data.revision++;
     }
-    if (enabled && powered) data.message = "Scanning paused while PSU is on";
+    if (enabled && blocked) data.message = "Scanning paused while BC250 is awake";
     else if (enabled && !scanning) data.message = "Scanner unavailable; disable and reboot before retrying";
-    if (previouslyPowered && !powered) { inhibited = true; inhibitedAt = now; }
-    previouslyPowered = powered;
+    if (previouslyBlocked && !blocked) { inhibited = true; inhibitedAt = now; }
+    previouslyBlocked = blocked;
     if (inhibited && uint32_t(now - inhibitedAt) >= ControllerLearning::ABSENCE_MS) inhibited = false;
     if (dropped.exchange(false)) {
       data.learner.cancel();
@@ -209,7 +210,7 @@ public:
     Observation observation;
     // Bound work per WLED loop so a busy radio cannot starve relay pulse handling.
     for (size_t n = 0; observations && n < QUEUE_SIZE && xQueueReceive(observations, &observation, 0) == pdTRUE; n++) {
-      if (powered || !data.enabled || !scanning || uint32_t(now - observation.at) > 1000) continue;
+      if (blocked || !data.enabled || !scanning || uint32_t(now - observation.at) > 1000) continue;
       // Discard packets queued before the current learning phase began.
       if (data.learner.phase != Phase::Idle && uint32_t(observation.at - data.learner.since) < 0x80000000UL)
         data.learner.observe(observation.id, observation.rssi, observation.at, data.store);
@@ -225,7 +226,7 @@ public:
     }
     if (data.learner.overflow) data.message = "Too many candidates; learning cancelled";
     unlock();
-    return wake && !powered;
+    return wake && !blocked;
   }
 
   // All edits are atomic under a short lock. A revision prevents an old browser
