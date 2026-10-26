@@ -502,6 +502,15 @@ class BC250Power : public Usermod {
       oappend(F("addInfo('BC250Power:automatic-cutoff',1,'Enable only after verifying sense goes inactive at shutdown with PSU still on.');"));
       oappend(F("addInfo('BC250Power:powered-preset',1,'0 keeps appearance. WLED on starts PSU; WLED off only darkens LEDs.');"));
       oappend(F("addInfo('BC250Power:controller-scan',1,'Live setting. Use Info / Xbox learning to learn, rename or delete controllers. Empty address means unused slot.');"));
+      // Populate preset selectors in the browser so names stay current without
+      // repeatedly parsing presets.json on the ESP. addOption assigns textContent.
+      oappend(F("fetch(getURL('/presets.json')).then(r=>{if(!r.ok)throw 0;return r.json()}).then(p=>{"));
+      oappend(F("for(const f of ['powered-preset','os-running-preset','sleep-preset','shutting-down-preset']){"));
+      oappend(F("const d=addDropdown('BC250Power',f);if(!d)continue;addOption(d,'0 - Keep current appearance',0);"));
+      oappend(F("for(const [i,v] of Object.entries(p)){const n=Number(i);if(n<1||n>250||!v||!v.n)continue;"));
+      oappend(F("addOption(d,n+' - '+v.n+(v.ql?' [QL: '+v.ql+']':''),n);}"));
+      oappend(F("const c=Number(d.dataset.val);if(c&&!Array.from(d.options).some(o=>Number(o.value)===c))addOption(d,c+' - Unnamed preset',c);"));
+      oappend(F("}}).catch(()=>console.warn('BC250Power: unable to load preset names'));"));
     }
 
     uint16_t getId() override { return USERMOD_ID_BC250_POWER; }

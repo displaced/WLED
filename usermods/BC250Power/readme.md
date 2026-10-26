@@ -390,7 +390,9 @@ to complete before disconnecting power, and verify the list after reboot.
 The sleeping LED preset is stored as `sleep-preset`. Older configurations using
 `sleeping-preset` migrate automatically; the shorter name avoids WLED's generic
 settings-page heuristic that mistakes any numeric field containing `pin` for a
-GPIO selector.
+GPIO selector. The settings page fetches WLED's preset list and displays all four
+preset fields as dropdowns containing the preset ID, name, and optional quick-load
+label. The numeric preset ID remains the persisted value.
 
 The JSON API reports `BC250Power.controllers` in `/json/state`, including the
 current `revision`, phase (0 idle, 1 baseline, 2 search, 3 confirmation), entries
