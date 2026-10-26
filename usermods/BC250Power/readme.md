@@ -290,8 +290,35 @@ and an asserted PSU relay, do not change state. Stable sense enters `POWERED`;
 returns `SLEEPING` to `OS_RUNNING`. Once `SHUTTING_DOWN` is reported, late
 `running` or `sleeping` events cannot reverse it. A sleep event does not disable
 automatic cutoff, so the sense input must remain active during sleep if PSU power
-is to be retained. OS integration is optional; no services are installed by this
-repository change.
+is to be retained. OS integration is optional. On a Linux system using systemd,
+install the supplied hooks with:
+
+```sh
+sudo bash ./usermods/BC250Power/install-os-integration.sh
+```
+
+The default WLED address is `http://loungepc-leds.home`. Pass another HTTP origin
+as the first argument when required:
+
+```sh
+sudo bash ./usermods/BC250Power/install-os-integration.sh http://192.168.50.237
+```
+
+The installer creates a notifier in `/usr/local/sbin`, its configuration in
+`/etc/bc250-wled.conf`, and two systemd services. One reports `running` after the
+network comes online and `shutting_down` before it goes offline. The other reports
+`sleeping` before suspend and `running` after resume. Startup notification retries
+to allow the network and WLED time to become reachable. Sleep and shutdown use
+only two short attempts, and notification failure always returns success so an
+unavailable WLED device cannot prevent an OS transition.
+
+Re-run the installer to update the destination or installed files. The services
+can be inspected with:
+
+```sh
+systemctl status bc250-wled-online.service bc250-wled-sleep.service
+journalctl -u bc250-wled-online.service -u bc250-wled-sleep.service
+```
 
 `GET /json/state` includes `BC250Power` with `state`, `psuOn`, `buttonRelayOn`,
 `powerSense`, `pinsReady`, `enabled`, `rebootRequired`, and `configRejected`. `osEvent` is never
